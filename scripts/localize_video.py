@@ -643,7 +643,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tts-format", default="wav", choices=["mp3", "wav", "aac"], help="Volc TTS output format")
     parser.add_argument("--tts-sample-rate", type=int, default=24000, choices=[8000, 16000, 22050, 24000, 32000, 44100, 48000], help="Volc TTS sample rate")
     parser.add_argument("--background-volume", type=float, default=0)
-    parser.add_argument("--max-tts-speedup", type=float, default=1.35)
+    parser.add_argument("--max-tts-speedup", type=float, default=2.5)
     parser.add_argument("--sidecar-subtitles", action="store_true", help="Embed subtitles as a soft track instead of burning them in")
     return parser.parse_args()
 

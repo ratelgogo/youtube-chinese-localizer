@@ -209,14 +209,14 @@ def translate_segments(
         raise SystemExit("Volcengine TranslateText accepts at most 16 texts per request")
 
     # 新版控制台使用 X-Api-Key；旧版控制台使用 X-Api-App-Key + X-Api-Access-Key
-    api_key = os.environ.get("VOLCENGINE_MT_API_KEY", "").strip()
+    api_key = os.environ.get("VOLCENGINE_API_KEY", "").strip()
     app_id = os.environ.get("VOLCENGINE_MT_APP_ID", "").strip()
     access_key = os.environ.get("VOLCENGINE_MT_ACCESS_KEY", "").strip()
     resource_id = os.environ.get("VOLCENGINE_MT_RESOURCE_ID", "volc.speech.mt").strip() or "volc.speech.mt"
 
     if not api_key and not (app_id and access_key):
         raise SystemExit(
-            "Translation credentials missing. Set VOLCENGINE_MT_API_KEY (new console) "
+            "Translation credentials missing. Set VOLCENGINE_API_KEY (new console) "
             "or both VOLCENGINE_MT_APP_ID and VOLCENGINE_MT_ACCESS_KEY (old console)."
         )
 
@@ -357,14 +357,14 @@ def synthesize_volc_tts(
     sample_rate: int,
 ) -> bytes:
     # 新版控制台使用 X-Api-Key；旧版控制台使用 X-Api-App-Key + X-Api-Access-Key
-    api_key = os.environ.get("VOLCENGINE_TTS_API_KEY", "").strip()
+    api_key = os.environ.get("VOLCENGINE_API_KEY", "").strip()
     app_id = os.environ.get("VOLCENGINE_TTS_APP_ID", "").strip()
     access_key = os.environ.get("VOLCENGINE_TTS_ACCESS_KEY", "").strip()
-    resource_id = os.environ.get("VOLCENGINE_TTS_RESOURCE_ID", "volc.speech.tts").strip() or "volc.speech.tts"
+    resource_id = os.environ.get("VOLCENGINE_TTS_RESOURCE_ID", "seed-tts-2.0").strip() or "seed-tts-2.0"
 
     if not api_key and not (app_id and access_key):
         raise SystemExit(
-            "TTS credentials missing. Set VOLCENGINE_TTS_API_KEY (new console) "
+            "TTS credentials missing. Set VOLCENGINE_API_KEY (new console) "
             "or both VOLCENGINE_TTS_APP_ID and VOLCENGINE_TTS_ACCESS_KEY (old console)."
         )
 

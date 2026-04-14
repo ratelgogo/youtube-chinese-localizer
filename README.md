@@ -33,12 +33,23 @@ brew install ffmpeg yt-dlp
 
 Set credentials:
 
+**New console (single API key for both MT and TTS):**
 ```bash
-export VOLCENGINE_ACCESS_KEY="AK..."
-export VOLCENGINE_SECRET_KEY="SK..."
-export VOLCENGINE_REGION="cn-north-1"
-export VOLCENGINE_TTS_API_KEY="your-tts-api-key"
-export VOLCENGINE_TTS_RESOURCE_ID="volc.service_type.10029"
+export VOLCENGINE_API_KEY="your-api-key"
+```
+
+**Old console (separate credentials):**
+- For Translation: `VOLCENGINE_MT_APP_ID` + `VOLCENGINE_MT_ACCESS_KEY`
+- For TTS: `VOLCENGINE_TTS_APP_ID` + `VOLCENGINE_TTS_ACCESS_KEY`
+- Optional: `VOLCENGINE_MT_RESOURCE_ID` (default: volc.speech.mt)
+- Optional: `VOLCENGINE_TTS_RESOURCE_ID` (default: seed-tts-2.0)
+
+Example (old console):
+```bash
+export VOLCENGINE_MT_APP_ID="your-mt-app-id"
+export VOLCENGINE_MT_ACCESS_KEY="your-mt-access-key"
+export VOLCENGINE_TTS_APP_ID="your-tts-app-id"
+export VOLCENGINE_TTS_ACCESS_KEY="your-tts-access-key"
 ```
 
 Run with a YouTube URL:

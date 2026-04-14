@@ -11,6 +11,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, TypeVar
@@ -190,20 +191,37 @@ def env_required(name: str) -> str:
     return value
 
 
-def create_volc_translate_api():
-    try:
-        from volcenginesdkcore import ApiClient, Configuration
-        from volcenginesdktranslate20250301 import TRANSLATE20250301Api
-    except ImportError as exc:
-        raise SystemExit(
-            "volcengine-python-sdk is not installed in the current environment"
-        ) from exc
+_VOLC_TRANSLATE_URL = "https://openspeech.bytedance.com/api/v3/machine_translation/matx_translate"
 
-    configuration = Configuration()
-    configuration.ak = env_required("VOLCENGINE_ACCESS_KEY")
-    configuration.sk = env_required("VOLCENGINE_SECRET_KEY")
-    configuration.region = os.environ.get("VOLCENGINE_REGION", "cn-north-1").strip() or "cn-north-1"
-    return TRANSLATE20250301Api(ApiClient(configuration))
+
+def volc_translate_request(
+    text_list: list[str],
+    target_language: str,
+    source_language: str | None,
+    api_key: str,
+) -> list[str]:
+    body: dict = {"target_language": target_language, "text_list": text_list}
+    if source_language:
+        body["source_language"] = source_language
+    payload = json.dumps(body).encode()
+    req = urllib.request.Request(
+        _VOLC_TRANSLATE_URL,
+        data=payload,
+        headers={
+            "X-Api-Key": api_key,
+            "X-Api-Resource-Id": "volc.speech.mt",
+            "X-Api-Request-Id": str(uuid.uuid4()),
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        raise SystemExit(f"Volcengine translate HTTP {exc.code}: {exc.read().decode()}") from exc
+    translation_list = (result.get("data") or {}).get("translation_list") or []
+    return [item.get("translation", "") for item in translation_list]
 
 
 def chunked(items: list[T], size: int) -> Iterable[list[T]]:
@@ -217,36 +235,27 @@ def translate_segments(
     target_language: str,
     batch_size: int,
 ) -> None:
-    try:
-        from volcenginesdktranslate20250301 import TranslateTextRequest
-    except ImportError as exc:
-        raise SystemExit(
-            "volcengine-python-sdk is required for translation"
-        ) from exc
-
     untranslated = [segment for segment in segments if not segment.translated_text]
     if not untranslated:
         return
     if batch_size > 16:
         raise SystemExit("Volcengine TranslateText accepts at most 16 texts per request")
 
-    translate_api = create_volc_translate_api()
+    api_key = env_required("VOLCENGINE_API_KEY")
     index_by_id = {index: segment for index, segment in enumerate(untranslated)}
     for batch_indexes in chunked(list(index_by_id.keys()), batch_size):
-        response = translate_api.translate_text(
-            TranslateTextRequest(
-                source_language=source_language,
-                target_language=target_language,
-                text_list=[index_by_id[index].text for index in batch_indexes],
-            )
+        translations = volc_translate_request(
+            text_list=[index_by_id[index].text for index in batch_indexes],
+            target_language=target_language,
+            source_language=source_language,
+            api_key=api_key,
         )
-        translations = response.translation_list or []
         if len(translations) != len(batch_indexes):
             raise SystemExit(
                 f"Volcengine translation returned {len(translations)} items for {len(batch_indexes)} inputs"
             )
         for position, batch_index in enumerate(batch_indexes):
-            translated_text = str(translations[position].translation or "").strip()
+            translated_text = translations[position].strip()
             if not translated_text:
                 raise SystemExit(f"Empty translation returned for segment {batch_index}")
             index_by_id[batch_index].translated_text = translated_text
@@ -337,8 +346,9 @@ def synthesize_volc_tts(
     response_format: str,
     sample_rate: int,
 ) -> bytes:
-    api_key = env_required("VOLCENGINE_TTS_API_KEY")
-    resource_id = os.environ.get("VOLCENGINE_TTS_RESOURCE_ID", "volc.service_type.10029").strip() or "volc.service_type.10029"
+    app_id = env_required("VOLCENGINE_TTS_APP_ID")
+    access_key = env_required("VOLCENGINE_TTS_ACCESS_KEY")
+    resource_id = os.environ.get("VOLCENGINE_TTS_RESOURCE_ID", "seed-tts-1.0").strip() or "seed-tts-1.0"
     body = json.dumps(
         {
             "req_params": {
@@ -348,18 +358,6 @@ def synthesize_volc_tts(
                     "format": response_format,
                     "sample_rate": sample_rate,
                 },
-                "additions": json.dumps(
-                    {
-                        "disable_markdown_filter": True,
-                        "enable_language_detector": True,
-                        "enable_latex_tn": True,
-                        "disable_default_bit_rate": True,
-                        "max_length_to_filter_parenthesis": 0,
-                        "cache_config": {"text_type": 1, "use_cache": True},
-                    },
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
             }
         },
         ensure_ascii=False,
@@ -368,9 +366,10 @@ def synthesize_volc_tts(
         "https://openspeech.bytedance.com/api/v3/tts/unidirectional",
         data=body,
         headers={
-            "x-api-key": api_key,
+            "X-Api-App-Id": app_id,
+            "X-Api-Access-Key": access_key,
             "X-Api-Resource-Id": resource_id,
-            "Connection": "keep-alive",
+            "X-Api-Request-Id": str(uuid.uuid4()),
             "Content-Type": "application/json",
         },
         method="POST",
@@ -379,8 +378,8 @@ def synthesize_volc_tts(
         with urllib.request.urlopen(request) as response:
             response_text = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise SystemExit(f"Volc TTS request failed ({exc.code}): {body}") from exc
+        err = exc.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"Volc TTS request failed ({exc.code}): {err}") from exc
 
     audio_parts: list[bytes] = []
     final_code: int | None = None
@@ -509,29 +508,32 @@ def export_final_video(
     burn_subtitles: bool,
 ) -> None:
     if burn_subtitles:
-        run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(source_video),
-                "-i",
-                str(final_audio),
-                "-vf",
-                f"subtitles='{escape_subtitle_path(subtitles_path)}'",
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-c:v",
-                "libx264",
-                "-c:a",
-                "aac",
-                "-shortest",
-                str(output_path),
-            ]
-        )
-        return
+        try:
+            run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(source_video),
+                    "-i",
+                    str(final_audio),
+                    "-vf",
+                    f"subtitles={escape_subtitle_path(subtitles_path)}",
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "1:a:0",
+                    "-c:v",
+                    "libx264",
+                    "-c:a",
+                    "aac",
+                    "-shortest",
+                    str(output_path),
+                ]
+            )
+            return
+        except subprocess.CalledProcessError:
+            print("! subtitle burn-in failed (libass not available?), falling back to sidecar subtitles")
 
     run(
         [
@@ -575,7 +577,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--whisper-compute-type", default="default", help="faster-whisper compute type")
     parser.add_argument("--translation-target-language", default="zh", help="Volcengine translation target language code")
     parser.add_argument("--translation-batch-size", type=int, default=16, help="Volcengine TranslateText batch size, max 16")
-    parser.add_argument("--voice", default="zh_female_qingxin", help="Volc TTS speaker name")
+    parser.add_argument("--voice", default="zh_female_yingtaowanzi_mars_bigtts", help="Volc TTS speaker name")
     parser.add_argument("--tts-format", default="wav", choices=["mp3", "wav", "aac"], help="Volc TTS output format")
     parser.add_argument("--tts-sample-rate", type=int, default=24000, choices=[8000, 16000, 22050, 24000, 32000, 44100, 48000], help="Volc TTS sample rate")
     parser.add_argument("--background-volume", type=float, default=0.12)

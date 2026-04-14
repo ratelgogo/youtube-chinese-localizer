@@ -11,6 +11,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, TypeVar
@@ -190,22 +191,6 @@ def env_required(name: str) -> str:
     return value
 
 
-def create_volc_translate_api():
-    try:
-        from volcenginesdkcore import ApiClient, Configuration
-        from volcenginesdktranslate20250301 import TRANSLATE20250301Api
-    except ImportError as exc:
-        raise SystemExit(
-            "volcengine-python-sdk is not installed in the current environment"
-        ) from exc
-
-    configuration = Configuration()
-    configuration.ak = env_required("VOLCENGINE_ACCESS_KEY")
-    configuration.sk = env_required("VOLCENGINE_SECRET_KEY")
-    configuration.region = os.environ.get("VOLCENGINE_REGION", "cn-north-1").strip() or "cn-north-1"
-    return TRANSLATE20250301Api(ApiClient(configuration))
-
-
 def chunked(items: list[T], size: int) -> Iterable[list[T]]:
     for index in range(0, len(items), size):
         yield items[index : index + size]
@@ -217,36 +202,70 @@ def translate_segments(
     target_language: str,
     batch_size: int,
 ) -> None:
-    try:
-        from volcenginesdktranslate20250301 import TranslateTextRequest
-    except ImportError as exc:
-        raise SystemExit(
-            "volcengine-python-sdk is required for translation"
-        ) from exc
-
     untranslated = [segment for segment in segments if not segment.translated_text]
     if not untranslated:
         return
     if batch_size > 16:
         raise SystemExit("Volcengine TranslateText accepts at most 16 texts per request")
 
-    translate_api = create_volc_translate_api()
+    # 新版控制台使用 X-Api-Key；旧版控制台使用 X-Api-App-Key + X-Api-Access-Key
+    api_key = os.environ.get("VOLCENGINE_MT_API_KEY", "").strip()
+    app_id = os.environ.get("VOLCENGINE_MT_APP_ID", "").strip()
+    access_key = os.environ.get("VOLCENGINE_MT_ACCESS_KEY", "").strip()
+    resource_id = os.environ.get("VOLCENGINE_MT_RESOURCE_ID", "volc.speech.mt").strip() or "volc.speech.mt"
+
+    if not api_key and not (app_id and access_key):
+        raise SystemExit(
+            "Translation credentials missing. Set VOLCENGINE_MT_API_KEY (new console) "
+            "or both VOLCENGINE_MT_APP_ID and VOLCENGINE_MT_ACCESS_KEY (old console)."
+        )
+
     index_by_id = {index: segment for index, segment in enumerate(untranslated)}
     for batch_indexes in chunked(list(index_by_id.keys()), batch_size):
-        response = translate_api.translate_text(
-            TranslateTextRequest(
-                source_language=source_language,
-                target_language=target_language,
-                text_list=[index_by_id[index].text for index in batch_indexes],
-            )
+        body: dict = {
+            "target_language": target_language,
+            "text_list": [index_by_id[i].text for i in batch_indexes],
+        }
+        if source_language:
+            body["source_language"] = source_language
+
+        headers: dict = {
+            "X-Api-Resource-Id": resource_id,
+            "X-Api-Request-Id": str(uuid.uuid4()),
+            "Content-Type": "application/json",
+        }
+        if api_key:
+            headers["X-Api-Key"] = api_key
+        else:
+            headers["X-Api-App-Key"] = app_id
+            headers["X-Api-Access-Key"] = access_key
+
+        body_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            "https://openspeech.bytedance.com/api/v3/machine_translation/matx_translate",
+            data=body_bytes,
+            headers=headers,
+            method="POST",
         )
-        translations = response.translation_list or []
+        try:
+            with urllib.request.urlopen(req) as resp:
+                response = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body_err = exc.read().decode("utf-8", errors="replace")
+            raise SystemExit(f"Volcengine MT request failed ({exc.code}): {body_err}") from exc
+
+        if response.get("code") != 20000000:
+            raise SystemExit(
+                f"Volcengine MT error: code={response.get('code')}, message={response.get('message')}"
+            )
+
+        translations = response.get("data", {}).get("translation_list") or []
         if len(translations) != len(batch_indexes):
             raise SystemExit(
-                f"Volcengine translation returned {len(translations)} items for {len(batch_indexes)} inputs"
+                f"Volcengine MT returned {len(translations)} items for {len(batch_indexes)} inputs"
             )
         for position, batch_index in enumerate(batch_indexes):
-            translated_text = str(translations[position].translation or "").strip()
+            translated_text = str(translations[position].get("translation") or "").strip()
             if not translated_text:
                 raise SystemExit(f"Empty translation returned for segment {batch_index}")
             index_by_id[batch_index].translated_text = translated_text
@@ -337,16 +356,33 @@ def synthesize_volc_tts(
     response_format: str,
     sample_rate: int,
 ) -> bytes:
-    api_key = env_required("VOLCENGINE_TTS_API_KEY")
-    resource_id = os.environ.get("VOLCENGINE_TTS_RESOURCE_ID", "volc.service_type.10029").strip() or "volc.service_type.10029"
+    # 新版控制台使用 X-Api-Key；旧版控制台使用 X-Api-App-Key + X-Api-Access-Key
+    api_key = os.environ.get("VOLCENGINE_TTS_API_KEY", "").strip()
+    app_id = os.environ.get("VOLCENGINE_TTS_APP_ID", "").strip()
+    access_key = os.environ.get("VOLCENGINE_TTS_ACCESS_KEY", "").strip()
+    resource_id = os.environ.get("VOLCENGINE_TTS_RESOURCE_ID", "volc.speech.tts").strip() or "volc.speech.tts"
+
+    if not api_key and not (app_id and access_key):
+        raise SystemExit(
+            "TTS credentials missing. Set VOLCENGINE_TTS_API_KEY (new console) "
+            "or both VOLCENGINE_TTS_APP_ID and VOLCENGINE_TTS_ACCESS_KEY (old console)."
+        )
+
+    request_id = str(uuid.uuid4())
     body = json.dumps(
         {
+            "user": {
+                "uid": app_id or "default",
+            },
             "req_params": {
                 "text": text,
+                "model": "seed-tts-2.0-standard",
                 "speaker": speaker,
                 "audio_params": {
                     "format": response_format,
                     "sample_rate": sample_rate,
+                    "bitrate": 128000,
+                    "enable_tsd": False,
                 },
                 "additions": json.dumps(
                     {
@@ -364,15 +400,21 @@ def synthesize_volc_tts(
         },
         ensure_ascii=False,
     ).encode("utf-8")
+    headers: dict = {
+        "X-Api-Resource-Id": resource_id,
+        "X-Api-Request-Id": request_id,
+        "Content-Type": "application/json",
+    }
+    if api_key:
+        headers["X-Api-Key"] = api_key
+    else:
+        headers["X-Api-App-Key"] = app_id
+        headers["X-Api-Access-Key"] = access_key
+    print(f"TTS request: resource_id={resource_id}, speaker={speaker}")
     request = urllib.request.Request(
         "https://openspeech.bytedance.com/api/v3/tts/unidirectional",
         data=body,
-        headers={
-            "x-api-key": api_key,
-            "X-Api-Resource-Id": resource_id,
-            "Connection": "keep-alive",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         method="POST",
     )
     try:
@@ -385,21 +427,43 @@ def synthesize_volc_tts(
     audio_parts: list[bytes] = []
     final_code: int | None = None
     final_message = ""
-    for raw_line in response_text.splitlines():
+    for raw_line in response_text.splitlines() or [response_text]:
         line = raw_line.strip()
         if not line:
             continue
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        if not line:
+            continue
         parsed = json.loads(line)
-        if parsed.get("data"):
-            audio_parts.append(base64.b64decode(parsed["data"]))
+
         if "code" in parsed:
             final_code = int(parsed["code"])
             final_message = str(parsed.get("message", ""))
 
+        chunk_payload = None
+        if isinstance(parsed.get("data"), str):
+            chunk_payload = parsed["data"]
+        elif isinstance(parsed.get("audio"), str):
+            chunk_payload = parsed["audio"]
+        elif isinstance(parsed.get("data"), dict):
+            data_obj = parsed["data"]
+            if isinstance(data_obj.get("audio"), str):
+                chunk_payload = data_obj["audio"]
+        if chunk_payload:
+            audio_parts.append(base64.b64decode(chunk_payload))
+
+    response_preview = response_text.strip().replace("\n", " ")
+    if len(response_preview) > 200:
+        response_preview = response_preview[:200] + "..."
+    if final_code not in (None, 0, 20000000):
+        raise SystemExit(
+            f"Volc TTS failed: code={final_code}, message={final_message}, response={response_preview}"
+        )
     if not audio_parts:
-        raise SystemExit("Volc TTS response did not contain audio chunks")
-    if final_code not in (0, 20000000):
-        raise SystemExit(f"Volc TTS failed: code={final_code}, message={final_message}")
+        raise SystemExit(
+            f"Volc TTS response did not contain audio chunks. response={response_preview}"
+        )
     return b"".join(audio_parts)
 
 
@@ -575,10 +639,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--whisper-compute-type", default="default", help="faster-whisper compute type")
     parser.add_argument("--translation-target-language", default="zh", help="Volcengine translation target language code")
     parser.add_argument("--translation-batch-size", type=int, default=16, help="Volcengine TranslateText batch size, max 16")
-    parser.add_argument("--voice", default="zh_female_qingxin", help="Volc TTS speaker name")
+    parser.add_argument("--voice", default="zh_male_m191_uranus_bigtts", help="Volc TTS speaker name")
     parser.add_argument("--tts-format", default="wav", choices=["mp3", "wav", "aac"], help="Volc TTS output format")
     parser.add_argument("--tts-sample-rate", type=int, default=24000, choices=[8000, 16000, 22050, 24000, 32000, 44100, 48000], help="Volc TTS sample rate")
-    parser.add_argument("--background-volume", type=float, default=0.12)
+    parser.add_argument("--background-volume", type=float, default=0)
     parser.add_argument("--max-tts-speedup", type=float, default=1.35)
     parser.add_argument("--sidecar-subtitles", action="store_true", help="Embed subtitles as a soft track instead of burning them in")
     return parser.parse_args()

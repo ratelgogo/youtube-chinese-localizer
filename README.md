@@ -1,4 +1,4 @@
-# video-Zebra-china
+# youtube-chinese-localizer
 
 Codex skill and standalone scripts for turning YouTube or local foreign-language videos into:
 
@@ -66,6 +66,30 @@ scripts/run_localize_video.sh \
   --workdir ./runs/local-video \
   --voice zh_male_beijingxiaoye_emo_v2_mars_bigtts
 ```
+
+## Command Line Arguments
+
+### Required Arguments
+- `--input`: YouTube URL or local video path
+- `--workdir`: Directory for intermediate and final files
+
+### Optional Arguments
+- `--transcript-json`: Existing transcript JSON with segments (skip transcription)
+- `--cookies-from-browser`: Pass browser cookies to yt-dlp (e.g., edge, chrome)
+- `--skip-transcription`: Require --transcript-json instead of transcribing
+- `--skip-tts`: Stop after subtitles and do not synthesize dubbing
+- `--source-language`: Hint language code for ASR
+- `--whisper-model`: faster-whisper model name (default: small)
+- `--whisper-device`: faster-whisper device (default: auto)
+- `--whisper-compute-type`: faster-whisper compute type (default: default)
+- `--translation-target-language`: Volcengine translation target language code (default: zh)
+- `--translation-batch-size`: Volcengine TranslateText batch size, max 16 (default: 16)
+- `--voice`: Volc TTS speaker name (default: zh_male_m191_uranus_bigtts)
+- `--tts-format`: Volc TTS output format: mp3, wav, aac (default: wav)
+- `--tts-sample-rate`: Volc TTS sample rate: 8000, 16000, 22050, 24000, 32000, 44100, 48000 (default: 24000)
+- `--background-volume`: Original audio volume in final mix, 0 to mute completely (default: 0)
+- `--max-tts-speedup`: Maximum speedup factor for TTS segments (default: 1.35)
+- `--sidecar-subtitles`: Embed subtitles as a soft track instead of burning them in
 
 ## Outputs
 

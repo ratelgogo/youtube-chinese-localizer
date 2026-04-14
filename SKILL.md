@@ -40,7 +40,7 @@ Use the default command first:
 scripts/run_localize_video.sh \
   --input "https://www.youtube.com/watch?v=..." \
   --workdir ./runs/demo \
-  --cookies-from-browser edge
+  --cookies-from-browser chrome
 ```
 
 Useful variants:
@@ -49,8 +49,9 @@ Useful variants:
 scripts/run_localize_video.sh \
   --input /path/to/video.mp4 \
   --workdir ./runs/local-video \
-  --voice zh_female_qingxin \
-  --background-volume 0.12
+  --voice zh_male_m191_uranus_bigtts \
+  --background-volume 0 \
+  --max-tts-speedup 2.5
 ```
 
 ```bash
